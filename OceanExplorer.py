@@ -1,7 +1,7 @@
 """
 ocean_explorer.py
 ─────────────────
-CS-MACH1 — Ocean Temperature Climate Explorer
+CS-MACH1 — Ocean Salinity Climate Explorer
 
 Layout
 ──────
@@ -44,7 +44,7 @@ warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 # ── Page config & branding ────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="CS-MACH1 Ocean Temperature Climate Explorer",
+    page_title="CS-MACH1 Ocean Salinity Climate Explorer",
     page_icon="🌊",
     layout="wide",
 )
@@ -62,7 +62,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<div class='main-title'>🌊 CS-MACH1 — Ocean Temperature Climate Explorer</div>",
+st.markdown("<div class='main-title'>🌊 CS-MACH1 — Ocean Salinity Climate Explorer</div>",
             unsafe_allow_html=True)
 st.markdown(
     "<div class='sub-title'>"
@@ -116,7 +116,7 @@ def fetch_wod_all(latitude: float, longitude: float) -> pd.DataFrame | None:
     Fetch ALL WOD profiles within ±0.1° with no depth filter (0–10 000 m).
     Cached by lat/lon only so depth changes don't trigger a new API call.
 
-    Returns raw DataFrame with columns: DEPTH, TEMPERATURE, TIME, LATITUDE, LONGITUDE.
+    Returns raw DataFrame with columns: DEPTH, SALINITY, TIME, LATITUDE, LONGITUDE.
     """
     try:
         client  = _wod_client()
@@ -127,26 +127,26 @@ def fetch_wod_all(latitude: float, longitude: float) -> pd.DataFrame | None:
 
         qb = client.query()
         qb.add_select_column("wod_unique_cast")
-        qb.add_select_column("Temperature",         alias="TEMPERATURE")
-        qb.add_select_column("Temperature_WODflag", alias="TEMPERATURE_QC")
+        qb.add_select_column("Salinity",         alias="SALINITY")
+        qb.add_select_column("Salinity_WODflag", alias="SALINITY_QC")
         qb.add_select_column("z",                   alias="DEPTH")
         qb.add_select_column("time",                alias="TIME")
         qb.add_select_column("lon",                 alias="LONGITUDE")
         qb.add_select_column("lat",                 alias="LATITUDE")
 
         qb.add_range_filter("TIME",      "1970-01-01T00:00:00", "2023-01-01T00:00:00")
-        qb.add_is_not_null_filter("TEMPERATURE")
-        qb.add_not_equals_filter("TEMPERATURE", -1e10)
-        qb.add_equals_filter("TEMPERATURE_QC",  0.0)
+        qb.add_is_not_null_filter("SALINITY")
+        qb.add_not_equals_filter("SALINITY", -1e10)
+        qb.add_equals_filter("SALINITY_QC",  0.0)
         qb.add_range_filter("DEPTH",     0, 10_000)
         qb.add_range_filter("LONGITUDE", lon_min, lon_max)
         qb.add_range_filter("LATITUDE",  lat_min, lat_max)
 
         raw = qb.to_pandas_dataframe()
-        raw["TEMPERATURE"] = pd.to_numeric(raw["TEMPERATURE"], errors="coerce")
+        raw["SALINITY"] = pd.to_numeric(raw["SALINITY"], errors="coerce")
         raw["DEPTH"]       = pd.to_numeric(raw["DEPTH"],       errors="coerce")
         raw["TIME"]        = pd.to_datetime(raw["TIME"],        errors="coerce")
-        return raw.dropna(subset=["DEPTH", "TEMPERATURE"])
+        return raw.dropna(subset=["DEPTH", "SALINITY"])
     except Exception as exc:
         st.warning(f"WOD query failed: {exc}")
         return None
@@ -224,7 +224,7 @@ def plot_cora_monthly(cora: pd.DataFrame,
     ax.set_xticks(range(1, 13))
     ax.set_xticklabels(MONTH_LABELS, fontsize=8)
     ax.set_xlabel("Month")
-    ax.set_ylabel("Temperature (°C)")
+    ax.set_ylabel("Salinity (PSU)")
     ax.set_title(
         f"CORA Monthly Mean ± Std (surface)\n"
         f"({latitude:.4f}°N, {longitude:.4f}°E) · 1990–2023",
@@ -262,9 +262,9 @@ def plot_cora_doy(cora: pd.DataFrame,
     fig.colorbar(sm, ax=ax, pad=0.02, label="Year")
 
     ax.set_xlabel("Day of Year")
-    ax.set_ylabel("Temperature (°C)")
+    ax.set_ylabel("Salinity (PSU)")
     ax.set_title(
-        f"CORA Interannual Temperature Variability (surface)\n"
+        f"CORA Interannual Salinity Variability (surface)\n"
         f"({latitude:.4f}°N, {longitude:.4f}°E)",
         fontsize=10,
     )
@@ -282,7 +282,7 @@ def plot_wod_monthly(wod: pd.DataFrame,
     """
     surf = wod[wod["DEPTH"] <= 10].copy()
     surf["m"] = pd.to_datetime(surf["TIME"], errors="coerce").dt.month
-    monthly   = surf.groupby("m")["TEMPERATURE"].agg(["mean", "std"]).reset_index()
+    monthly   = surf.groupby("m")["SALINITY"].agg(["mean", "std"]).reset_index()
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -303,7 +303,7 @@ def plot_wod_monthly(wod: pd.DataFrame,
     ax.set_xticks(range(1, 13))
     ax.set_xticklabels(MONTH_LABELS, fontsize=8)
     ax.set_xlabel("Month")
-    ax.set_ylabel("Temperature (°C)")
+    ax.set_ylabel("Salinity (PSU)")
     ax.set_title(
         f"WOD Monthly Mean ± Std (depth ≤ 10 m)\n"
         f"({latitude:.4f}°N, {longitude:.4f}°E) · 1970–2023",
@@ -330,7 +330,7 @@ def plot_wod_doy(wod: pd.DataFrame,
     if surf.empty:
         ax.text(0.5, 0.5, "No surface WOD data (depth ≤ 10 m)",
                 ha="center", va="center", transform=ax.transAxes, color="grey")
-        ax.set_title("WOD Interannual Temperature Variability (surface)", fontsize=10)
+        ax.set_title("WOD Interannual Salinity Variability (surface)", fontsize=10)
         fig.tight_layout()
         return fig
 
@@ -339,10 +339,10 @@ def plot_wod_doy(wod: pd.DataFrame,
 
     for colour, (_, ydata) in zip(colours, surf.groupby(surf["time"].dt.year)):
         doy = ydata["time"].dt.dayofyear
-        ax.scatter(doy, ydata["TEMPERATURE"], s=8, color=colour, alpha=0.55)
+        ax.scatter(doy, ydata["SALINITY"], s=8, color=colour, alpha=0.55)
 
     surf["doy"] = surf["time"].dt.dayofyear
-    doy_med     = surf.groupby("doy")["TEMPERATURE"].median()
+    doy_med     = surf.groupby("doy")["SALINITY"].median()
     ax.plot(doy_med.index, doy_med.values,
             color="crimson", lw=2, zorder=5, label="Daily median")
 
@@ -354,9 +354,9 @@ def plot_wod_doy(wod: pd.DataFrame,
     fig.colorbar(sm, ax=ax, pad=0.02, label="Year")
 
     ax.set_xlabel("Day of Year")
-    ax.set_ylabel("Temperature (°C)")
+    ax.set_ylabel("Salinity (PSU)")
     ax.set_title(
-        f"WOD Interannual Temperature Variability (depth ≤ 10 m)\n"
+        f"WOD Interannual Salinity Variability (depth ≤ 10 m)\n"
         f"({latitude:.4f}°N, {longitude:.4f}°E)",
         fontsize=10,
     )
@@ -381,7 +381,7 @@ def plot_wod_scatter(raw_full: pd.DataFrame, max_depth: float,
 
     if not plot_df.empty:
         sc = ax.scatter(
-            plot_df["TEMPERATURE"], plot_df["DEPTH"],
+            plot_df["SALINITY"], plot_df["DEPTH"],
             c=plot_df["DEPTH"], cmap="Blues_r",
             s=5, alpha=0.4, vmin=0, vmax=max_depth,
         )
@@ -390,7 +390,7 @@ def plot_wod_scatter(raw_full: pd.DataFrame, max_depth: float,
         ax.text(0.5, 0.5, "No data in range", ha="center", va="center",
                 transform=ax.transAxes, color="grey")
 
-    ax.set_xlabel("Temperature (°C)")
+    ax.set_xlabel("Salinity (PSU)")
     ax.set_ylabel("Depth (m)")
     ax.invert_yaxis()
     ax.set_ylim(bottom=max_depth, top=0)
@@ -447,7 +447,7 @@ def plot_cora_depth_profile(cora_dp: pd.DataFrame, max_depth: float,
     ax.plot(profile["median"], profile[depth_col],
             "-",  color="darkorange", lw=1.8, ls=":", label="Median")
 
-    ax.set_xlabel("Temperature (°C)")
+    ax.set_xlabel("Salinity (PSU)")
     ax.set_ylabel("Depth (m)")
     ax.invert_yaxis()
     ax.set_ylim(bottom=max_depth, top=0)
@@ -765,7 +765,7 @@ if "results" in st.session_state:
         ax_cm.set_xticks(range(1, 13))
         ax_cm.set_xticklabels(MONTH_LABELS, fontsize=7)
         ax_cm.set_xlabel("Month")
-        ax_cm.set_ylabel("Temperature (°C)")
+        ax_cm.set_ylabel("Salinity (PSU)")
         ax_cm.set_title(
             f"CORA Monthly Mean ± Std (surface)\n"
             f"({rlat:.4f}°N, {rlon:.4f}°E) · 1990–2023", fontsize=9)
@@ -790,7 +790,7 @@ if "results" in st.session_state:
         sm_c.set_array([])
         fig.colorbar(sm_c, ax=ax_cd, pad=0.02, label="Year")
         ax_cd.set_xlabel("Day of Year")
-        ax_cd.set_ylabel("Temperature (°C)")
+        ax_cd.set_ylabel("Salinity (PSU)")
         ax_cd.set_title(
             f"CORA Interannual Variability (surface)\n"
             f"({rlat:.4f}°N, {rlon:.4f}°E)", fontsize=9)
@@ -804,11 +804,11 @@ if "results" in st.session_state:
     if wod_raw is not None and not wod_raw.empty:
         surf_wod        = wod_raw[wod_raw["DEPTH"] <= 10].copy()
         surf_wod["time"] = pd.to_datetime(surf_wod["TIME"], errors="coerce")
-        surf_wod = surf_wod.dropna(subset=["time", "TEMPERATURE"])
+        surf_wod = surf_wod.dropna(subset=["time", "SALINITY"])
 
         # [1,0] WOD monthly mean ± std
         surf_wod["m"] = surf_wod["time"].dt.month
-        wmon = surf_wod.groupby("m")["TEMPERATURE"].agg(["mean", "std"]).reset_index()
+        wmon = surf_wod.groupby("m")["SALINITY"].agg(["mean", "std"]).reset_index()
 
         if not wmon.empty:
             ax_wm.fill_between(wmon["m"],
@@ -826,7 +826,7 @@ if "results" in st.session_state:
         ax_wm.set_xticks(range(1, 13))
         ax_wm.set_xticklabels(MONTH_LABELS, fontsize=7)
         ax_wm.set_xlabel("Month")
-        ax_wm.set_ylabel("Temperature (°C)")
+        ax_wm.set_ylabel("SAinity (PSU)")
         ax_wm.set_title(
             f"WOD Monthly Mean ± Std (depth ≤ 10 m)\n"
             f"({rlat:.4f}°N, {rlon:.4f}°E) · 1970–2023", fontsize=9)
@@ -839,10 +839,10 @@ if "results" in st.session_state:
             colours_w = cm.plasma(np.linspace(0, 1, len(years_w)))
             for col_w, (_, ydata) in zip(colours_w,
                                          surf_wod.groupby(surf_wod["time"].dt.year)):
-                ax_wd.scatter(ydata["time"].dt.dayofyear, ydata["TEMPERATURE"],
+                ax_wd.scatter(ydata["time"].dt.dayofyear, ydata["SALINITY"],
                               s=6, color=col_w, alpha=0.5)
             surf_wod["doy"] = surf_wod["time"].dt.dayofyear
-            doy_med_w = surf_wod.groupby("doy")["TEMPERATURE"].median()
+            doy_med_w = surf_wod.groupby("doy")["SALINITY"].median()
             ax_wd.plot(doy_med_w.index, doy_med_w.values,
                        color="crimson", lw=2, zorder=5, label="Daily median")
             sm_w = plt.cm.ScalarMappable(
@@ -854,7 +854,7 @@ if "results" in st.session_state:
             _blank(ax_wd, "No surface WOD data (depth ≤ 10 m)")
 
         ax_wd.set_xlabel("Day of Year")
-        ax_wd.set_ylabel("Temperature (°C)")
+        ax_wd.set_ylabel("Salinity (PSU)")
         ax_wd.set_title(
             f"WOD Interannual Variability (depth ≤ 10 m)\n"
             f"({rlat:.4f}°N, {rlon:.4f}°E)", fontsize=9)
@@ -873,14 +873,14 @@ if "results" in st.session_state:
                     if len(raw_clip) > 0 else raw_clip)
         if not plot_df.empty:
             sc = ax_ws.scatter(
-                plot_df["TEMPERATURE"], plot_df["DEPTH"],
+                plot_df["SALINITY"], plot_df["DEPTH"],
                 c=plot_df["DEPTH"], cmap="Blues_r",
                 s=4, alpha=0.4, vmin=0, vmax=max_depth,
             )
             fig.colorbar(sc, ax=ax_ws, label="Depth (m)", pad=0.02)
         else:
             _blank(ax_ws, "No WOD data in depth range")
-        ax_ws.set_xlabel("Temperature (°C)")
+        ax_ws.set_xlabel("Salinity (PSU)")
         ax_ws.set_ylabel("Depth (m)")
         ax_ws.invert_yaxis()
         ax_ws.set_ylim(bottom=max_depth, top=0)
@@ -912,7 +912,7 @@ if "results" in st.session_state:
                    "-",  color="steelblue", lw=2.5, label="Mean")
         ax_cp.plot(profile["median"], profile["depth"],
                    ":",  color="darkorange", lw=1.8, label="Median")
-        ax_cp.set_xlabel("Temperature (°C)")
+        ax_cp.set_xlabel("Salinity (PSU)")
         ax_cp.set_ylabel("Depth (m)")
         ax_cp.invert_yaxis()
         ax_cp.set_ylim(bottom=max_depth, top=0)
@@ -983,9 +983,9 @@ if "results" in st.session_state:
     if has_wod_mon:
         sw3          = wod_raw[wod_raw["DEPTH"] <= 10].copy()
         sw3["time"]  = pd.to_datetime(sw3["TIME"], errors="coerce")
-        sw3          = sw3.dropna(subset=["time", "TEMPERATURE"])
+        sw3          = sw3.dropna(subset=["time", "SALINITY"])
         sw3["m"]     = sw3["time"].dt.month
-        wmon3        = sw3.groupby("m")["TEMPERATURE"].agg(["mean", "std"]).reset_index()
+        wmon3        = sw3.groupby("m")["SALINITY"].agg(["mean", "std"]).reset_index()
         if not wmon3.empty:
             ax_mon.fill_between(wmon3["m"],
                                 wmon3["mean"] - wmon3["std"],
@@ -1001,7 +1001,7 @@ if "results" in st.session_state:
         ax_mon.set_xticks(range(1, 13))
         ax_mon.set_xticklabels(MONTH_LABELS, fontsize=7)
         ax_mon.set_xlabel("Month")
-        ax_mon.set_ylabel("Temperature (°C)")
+        ax_mon.set_ylabel("Salinity (PSU)")
         ax_mon.set_title(
             f"Monthly Mean ± Std — CORA (solid) vs WOD (dashed)\n"
             f"({rlat:.4f}°N, {rlon:.4f}°E)", fontsize=9)
@@ -1022,7 +1022,7 @@ if "results" in st.session_state:
     if has_wod_dp:
         wclip = wod_raw[wod_raw["DEPTH"] <= max_depth].copy()
         if not wclip.empty:
-            prof_w = (wclip.groupby("DEPTH")["TEMPERATURE"]
+            prof_w = (wclip.groupby("DEPTH")["SALINITY"]
                       .agg(["mean", "std"]).reset_index().sort_values("DEPTH"))
             ax_dep.fill_betweenx(prof_w["DEPTH"],
                                  prof_w["mean"] - prof_w["std"],
@@ -1034,7 +1034,7 @@ if "results" in st.session_state:
     if not has_cora_dp and not has_wod_dp:
         _blank(ax_dep, "No depth profile data available")
     else:
-        ax_dep.set_xlabel("Temperature (°C)")
+        ax_dep.set_xlabel("Salinity (PSU)")
         ax_dep.set_ylabel("Depth (m)")
         ax_dep.invert_yaxis()
         ax_dep.set_ylim(bottom=max_depth, top=0)
@@ -1082,7 +1082,7 @@ if "results" in st.session_state:
             )
 
             cb_ct = fig2.colorbar(sc_ct, ax=ax_ct, pad=0.02)
-            cb_ct.set_label("Temperature (°C)", fontsize=8)
+            cb_ct.set_label("Salinity (PSU)", fontsize=8)
 
         else:
             _blank(ax_ct, "No CORA monthly depth data")
@@ -1094,7 +1094,7 @@ if "results" in st.session_state:
         ax_ct.set_ylim(bottom=max_depth, top=0)
 
         ax_ct.set_title(
-            f"CORA Monthly Mean Temperature (TIME × DEPTH)\n"
+            f"CORA Monthly Mean Salinity (TIME × DEPTH)\n"
             f"({rlat:.4f}°N, {rlon:.4f}°E) · 0 – {max_depth:.0f} m",
             fontsize=9
         )
@@ -1121,7 +1121,7 @@ if "results" in st.session_state:
         )
     
         wod_plot = wod_plot.dropna(
-            subset=["time", "DEPTH", "TEMPERATURE"]
+            subset=["time", "DEPTH", "SALINITY"]
         )
     
         # ── Monthly averages ──────────────────────────────────────────────
@@ -1129,20 +1129,20 @@ if "results" in st.session_state:
     
         wod_monthly = (
             wod_plot
-            .groupby(["year_month", "DEPTH"])["TEMPERATURE"]
+            .groupby(["year_month", "DEPTH"])["SALINITY"]
             .mean()
             .reset_index()
         )
     
         if not wod_monthly.empty:
     
-            t_min_w = wod_monthly["TEMPERATURE"].min()
-            t_max_w = wod_monthly["TEMPERATURE"].max()
+            t_min_w = wod_monthly["SALINITY"].min()
+            t_max_w = wod_monthly["SALINITY"].max()
     
             sc_wt = ax_wt.scatter(
                 wod_monthly["year_month"],
                 wod_monthly["DEPTH"],
-                c=wod_monthly["TEMPERATURE"],
+                c=wod_monthly["SALINITY"],
                 cmap="rainbow",
                 s=10,
                 alpha=0.7,
@@ -1151,7 +1151,7 @@ if "results" in st.session_state:
             )
     
             cb_wt = fig2.colorbar(sc_wt, ax=ax_wt, pad=0.02)
-            cb_wt.set_label("Temperature (°C)", fontsize=8)
+            cb_wt.set_label("Salinity (PSU)", fontsize=8)
     
         else:
             _blank(ax_wt, "No WOD monthly data in depth range")
@@ -1162,7 +1162,7 @@ if "results" in st.session_state:
         ax_wt.set_ylim(bottom=max_depth, top=0)
     
         ax_wt.set_title(
-            f"WOD Monthly Mean Temperature (TIME × DEPTH)\n"
+            f"WOD Monthly Mean Salinity (TIME × DEPTH)\n"
             f"({rlat:.4f}°N, {rlon:.4f}°E) · 0 – {max_depth:.0f} m",
             fontsize=9
         )
@@ -1244,7 +1244,7 @@ if "results" in st.session_state:
             )
 
             cb_c = fig3.colorbar(cf_c, ax=ax_ch, pad=0.02)
-            cb_c.set_label("Temperature (°C)", fontsize=8)
+            cb_c.set_label("Salinity (PSU)", fontsize=8)
 
             ax_ch.contour(
                 Xc,
@@ -1290,7 +1290,7 @@ if "results" in st.session_state:
         )
 
         wod_plot = wod_plot.dropna(
-            subset=["time", "DEPTH", "TEMPERATURE"]
+            subset=["time", "DEPTH", "SALINITY"]
         )
 
         wod_plot["month"] = wod_plot["time"].dt.month
@@ -1304,7 +1304,7 @@ if "results" in st.session_state:
 
         wod_monthly = (
             wod_plot
-            .groupby(["month", "DEPTH_BIN"])["TEMPERATURE"]
+            .groupby(["month", "DEPTH_BIN"])["SALINITY"]
             .mean()
             .reset_index()
         )
@@ -1314,7 +1314,7 @@ if "results" in st.session_state:
             hov_w = wod_monthly.pivot(
                 index="DEPTH_BIN",
                 columns="month",
-                values="TEMPERATURE"
+                values="SALINITY"
             )
 
             hov_w = hov_w.sort_index()
@@ -1333,7 +1333,7 @@ if "results" in st.session_state:
             )
 
             cb_w = fig3.colorbar(cf_w, ax=ax_wh, pad=0.02)
-            cb_w.set_label("Temperature (°C)", fontsize=8)
+            cb_w.set_label("Salinity (PSU)", fontsize=8)
 
             ax_wh.contour(
                 Xw,
