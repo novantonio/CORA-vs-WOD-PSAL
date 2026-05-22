@@ -38,7 +38,6 @@ import requests
 import streamlit as st
 from streamlit_folium import st_folium
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
 
@@ -130,10 +129,10 @@ def fetch_wod_all(latitude: float, longitude: float) -> pd.DataFrame | None:
         qb.add_select_column("wod_unique_cast")
         qb.add_select_column("Salinity",         alias="SALINITY")
         qb.add_select_column("Salinity_WODflag", alias="SALINITY_QC")
-        qb.add_select_column("z",                   alias="DEPTH")
-        qb.add_select_column("time",                alias="TIME")
-        qb.add_select_column("lon",                 alias="LONGITUDE")
-        qb.add_select_column("lat",                 alias="LATITUDE")
+        qb.add_select_column("z",                alias="DEPTH")
+        qb.add_select_column("time",             alias="TIME")
+        qb.add_select_column("lon",              alias="LONGITUDE")
+        qb.add_select_column("lat",              alias="LATITUDE")
 
         qb.add_range_filter("TIME",      "1970-01-01T00:00:00", "2023-01-01T00:00:00")
         qb.add_is_not_null_filter("SALINITY")
@@ -145,8 +144,8 @@ def fetch_wod_all(latitude: float, longitude: float) -> pd.DataFrame | None:
 
         raw = qb.to_pandas_dataframe()
         raw["SALINITY"] = pd.to_numeric(raw["SALINITY"], errors="coerce")
-        raw["DEPTH"]       = pd.to_numeric(raw["DEPTH"],       errors="coerce")
-        raw["TIME"]        = pd.to_datetime(raw["TIME"],        errors="coerce")
+        raw["DEPTH"]    = pd.to_numeric(raw["DEPTH"],    errors="coerce")
+        raw["TIME"]     = pd.to_datetime(raw["TIME"],    errors="coerce")
         return raw.dropna(subset=["DEPTH", "SALINITY"])
     except Exception as exc:
         st.warning(f"WOD query failed: {exc}")
@@ -154,6 +153,42 @@ def fetch_wod_all(latitude: float, longitude: float) -> pd.DataFrame | None:
 
 
 @st.cache_data(show_spinner="Downloading CORA surface climatology…", ttl=86400)
+def _normalize_cora_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    ERDDAP CSV responses sometimes have column names with leading/trailing
+    spaces or different capitalisation.  This helper strips whitespace from
+    all column names and creates a canonical 'PSAL' column from whatever
+    salinity-like column is present (PSAL, psal, Psal, sea_water_salinity…).
+    """
+    df.columns = [c.strip() for c in df.columns]
+
+    # Find the salinity column case-insensitively
+    sal_col = next(
+        (c for c in df.columns if c.strip().upper() in ("PSAL", "SEA_WATER_SALINITY", "SALINITY")),
+        None,
+    )
+    if sal_col and sal_col != "PSAL":
+        df = df.rename(columns={sal_col: "PSAL"})
+
+    # Find the time column
+    time_col = next(
+        (c for c in df.columns if c.strip().lower() in ("time", "datetime", "date_time")),
+        None,
+    )
+    if time_col and time_col != "time":
+        df = df.rename(columns={time_col: "time"})
+
+    # Find the depth column
+    depth_col = next(
+        (c for c in df.columns if c.strip().lower() in ("depth", "z", "depth_m")),
+        None,
+    )
+    if depth_col and depth_col != "depth":
+        df = df.rename(columns={depth_col: "depth"})
+
+    return df
+
+
 def fetch_cora_surface(latitude: float, longitude: float) -> pd.DataFrame | None:
     """CORA at 1 m depth — cached by lat/lon only."""
     url = CORA_SURFACE_URL.format(lat=round(latitude, 4), lon=round(longitude, 4))
@@ -163,9 +198,12 @@ def fetch_cora_surface(latitude: float, longitude: float) -> pd.DataFrame | None
         if "<html" in r.text.lower():
             raise ValueError("CORA returned an HTML error page.")
         df = pd.read_csv(io.StringIO(r.text), skiprows=[1])
-        df["time"] = pd.to_datetime(df["time"])
-        df["PSAL"] = pd.to_numeric(df["PSAL"], errors="coerce")
-        return df.dropna()
+        df = _normalize_cora_df(df)
+        if "PSAL" not in df.columns:
+            raise KeyError(f"No salinity column found. Columns: {list(df.columns)}")
+        df["time"] = pd.to_datetime(df["time"], errors="coerce")
+        df["PSAL"] = pd.to_numeric(df["PSAL"], errors="coerce").round(3)
+        return df.dropna(subset=["time", "PSAL"])
     except Exception as exc:
         st.warning(f"CORA surface fetch failed: {exc}")
         return None
@@ -191,12 +229,14 @@ def fetch_cora_depth_profile(latitude: float, longitude: float,
         if "<html" in r.text.lower():
             raise ValueError("CORA returned an HTML error page.")
         df = pd.read_csv(io.StringIO(r.text), skiprows=[1])
-        df["time"]  = pd.to_datetime(df["time"])
-        df["PSAL"]  = pd.to_numeric(df["PSAL"],  errors="coerce")
-        # ERDDAP returns a "depth" column with the depth in metres
+        df = _normalize_cora_df(df)
+        if "PSAL" not in df.columns:
+            raise KeyError(f"No salinity column found. Columns: {list(df.columns)}")
+        df["time"] = pd.to_datetime(df["time"], errors="coerce")
+        df["PSAL"] = pd.to_numeric(df["PSAL"], errors="coerce").round(3)
         if "depth" in df.columns:
             df["depth"] = pd.to_numeric(df["depth"], errors="coerce")
-        return df.dropna()
+        return df.dropna(subset=["time", "PSAL"])
     except Exception as exc:
         st.warning(f"CORA depth profile fetch failed: {exc}")
         return None
@@ -279,7 +319,6 @@ def plot_wod_monthly(wod: pd.DataFrame,
                      latitude: float, longitude: float) -> plt.Figure:
     """
     WOD monthly mean ± std — surface layer (DEPTH ≤ 10 m).
-    Same treatment as plot_cora_monthly but using WOD raw observations.
     """
     surf = wod[wod["DEPTH"] <= 10].copy()
     surf["m"] = pd.to_datetime(surf["TIME"], errors="coerce").dt.month
@@ -320,7 +359,6 @@ def plot_wod_doy(wod: pd.DataFrame,
                  latitude: float, longitude: float) -> plt.Figure:
     """
     WOD DOY scatter coloured by year + daily median — surface layer (DEPTH ≤ 10 m).
-    Same treatment as plot_cora_doy but using WOD raw observations.
     """
     surf       = wod[wod["DEPTH"] <= 10].copy()
     surf["time"] = pd.to_datetime(surf["TIME"], errors="coerce")
@@ -371,7 +409,6 @@ def plot_wod_scatter(raw_full: pd.DataFrame, max_depth: float,
                      latitude: float, longitude: float) -> plt.Figure:
     """
     WOD individual observations clipped to max_depth.
-    Re-rendered on every slider change using the already-cached full dataset.
     """
     raw = raw_full[raw_full["DEPTH"] <= max_depth].copy()
 
@@ -408,8 +445,7 @@ def plot_wod_scatter(raw_full: pd.DataFrame, max_depth: float,
 def plot_cora_depth_profile(cora_dp: pd.DataFrame, max_depth: float,
                              latitude: float, longitude: float) -> plt.Figure:
     """
-    CORA T–depth profile: mean ± std across all times at each depth level,
-    analogous to the WOD envelope but from CORA gridded data.
+    CORA T–depth profile: mean ± std across all times at each depth level.
     """
     fig, ax = plt.subplots(figsize=(6, 8))
 
@@ -429,22 +465,18 @@ def plot_cora_depth_profile(cora_dp: pd.DataFrame, max_depth: float,
         .sort_values(depth_col)
     )
 
-    # ± std envelope
     ax.fill_betweenx(
         profile[depth_col],
         profile["mean"] - profile["std"],
         profile["mean"] + profile["std"],
         alpha=0.18, color="steelblue", label="± 1 std",
     )
-    # Min / max bounds as dashed lines
     ax.plot(profile["mean"] - profile["std"], profile[depth_col],
             "--", color="royalblue", lw=1.2, alpha=0.7, label="Mean − std")
     ax.plot(profile["mean"] + profile["std"], profile[depth_col],
             "--", color="tomato",    lw=1.2, alpha=0.7, label="Mean + std")
-    # Mean profile
     ax.plot(profile["mean"],   profile[depth_col],
             "-",  color="steelblue", lw=2.5, label="Mean")
-    # Median profile
     ax.plot(profile["median"], profile[depth_col],
             "-",  color="darkorange", lw=1.8, ls=":", label="Median")
 
@@ -484,8 +516,6 @@ with st.sidebar:
     st.divider()
     st.markdown("### ⚙️ Parameters")
 
-    # depth slider — changing this value triggers reactive re-render of
-    # WOD scatter (clip from cache) and CORA depth profile (new cached fetch)
     max_depth = st.slider(
         "Max depth (m)", min_value=10, max_value=5000,
         value=st.session_state.get("last_depth", 200),
@@ -524,12 +554,10 @@ st.caption(
 center_lat = st.session_state.get("sel_lat", DEFAULT_LAT)
 center_lon = st.session_state.get("sel_lon", DEFAULT_LON)
 
-m = folium.Map(location=[center_lat, center_lon], zoom_start=5,
-               tiles=None)           # no default tile — we add ours below
+m = folium.Map(location=[center_lat, center_lon], zoom_start=5, tiles=None)
 
 # ── Base layers ───────────────────────────────────────────────────────────────
 
-# 1. CartoDB Positron (light, clean)
 folium.TileLayer(
     tiles="CartoDB positron",
     name="CartoDB Positron",
@@ -538,7 +566,6 @@ folium.TileLayer(
     show=True,
 ).add_to(m)
 
-# 2. ESRI — mean depth, multi-colour style (Web Mercator)
 folium.TileLayer(
     tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}",
     attr="Esri",
@@ -547,8 +574,6 @@ folium.TileLayer(
     control=True,
 ).add_to(m)
 
-# 3. EMODnet Bathymetry WMTS — mean depth, multi-colour style (Web Mercator)
-#    Tile URL pattern for WMTS in slippy-map convention
 folium.TileLayer(
     tiles=(
         "https://tiles.emodnet-bathymetry.eu/wmts/1.0.0/"
@@ -565,7 +590,6 @@ folium.TileLayer(
     opacity=0.85,
 ).add_to(m)
 
-# 4. EMODnet Bathymetry WMTS — rainbow colour ramp
 folium.TileLayer(
     tiles=(
         "https://tiles.emodnet-bathymetry.eu/wmts/1.0.0/"
@@ -584,7 +608,8 @@ folium.TileLayer(
 
 # ── Overlay layers ────────────────────────────────────────────────────────────
 
-# 5. EMODnet Bathymetry WMS — bathymetric contours (isobaths)
+# FIX: WmsTileLayer does not accept `opacity` as a named parameter;
+#      pass it via **kwargs (it is forwarded correctly by folium).
 folium.WmsTileLayer(
     url="https://ows.emodnet-bathymetry.eu/wms",
     layers="emodnet:contours",
@@ -602,7 +627,6 @@ folium.WmsTileLayer(
     opacity=0.7,
 ).add_to(m)
 
-# 6. EMODnet Bathymetry WMS — mean depth DTM (semi-transparent overlay)
 folium.WmsTileLayer(
     url="https://ows.emodnet-bathymetry.eu/wms",
     layers="emodnet:mean_multicolour",
@@ -635,7 +659,10 @@ folium.Rectangle(
 
 folium.LayerControl().add_to(m)
 
-map_result = st_folium(m, use_container_width=True,, height=420, returned_objects=["last_clicked"])
+# FIX: width="100%" (string) is not accepted by st_folium (expects int).
+#      Use use_container_width=True instead.
+map_result = st_folium(m, use_container_width=True, height=420,
+                       returned_objects=["last_clicked"])
 
 if map_result and map_result.get("last_clicked"):
     clicked = map_result["last_clicked"]
@@ -679,10 +706,7 @@ if run_btn:
     st.session_state["last_depth"] = max_depth
 
 
-# ── Reactive depth update (slider changed after initial run) ──────────────────
-# This block fires on every Streamlit re-run when results exist and depth
-# has changed — re-clips WOD from cache and re-fetches CORA depth profile
-# (which is itself cached by lat/lon/depth, so repeated same-depth calls are free).
+# ── Reactive depth update ─────────────────────────────────────────────────────
 
 if (
     "results" in st.session_state
@@ -726,7 +750,6 @@ if "results" in st.session_state:
         c4.metric("WOD depth range",
                   f"{wod_clipped['DEPTH'].min():.0f}–{wod_clipped['DEPTH'].max():.0f} m")
 
-    # ── 3 × 2 figure: all six panels ─────────────────────────────────────────
     st.caption(
         "ℹ️ Move the **Max depth** slider in the sidebar to update the bottom row "
         "without re-running the full analysis."
@@ -737,11 +760,10 @@ if "results" in st.session_state:
         figsize=(18, 18),
         gridspec_kw={"hspace": 0.42, "wspace": 0.30},
     )
-    ax_cm, ax_cd = axes[0, 0], axes[0, 1]   # Row 1 — CORA surface
-    ax_wm, ax_wd = axes[1, 0], axes[1, 1]   # Row 2 — WOD surface
-    ax_ws, ax_cp = axes[2, 0], axes[2, 1]   # Row 3 — depth profiles
+    ax_cm, ax_cd = axes[0, 0], axes[0, 1]
+    ax_wm, ax_wd = axes[1, 0], axes[1, 1]
+    ax_ws, ax_cp = axes[2, 0], axes[2, 1]
 
-    # ── helper: blank panel with message ──────────────────────────────────────
     def _blank(ax: plt.Axes, msg: str) -> None:
         ax.text(0.5, 0.5, msg, ha="center", va="center",
                 transform=ax.transAxes, color="grey", fontsize=10)
@@ -750,7 +772,6 @@ if "results" in st.session_state:
 
     # ── Row 1 — CORA surface ──────────────────────────────────────────────────
     if cora_surf is not None and not cora_surf.empty:
-        # [0,0] CORA monthly mean ± std
         cs     = cora_surf.copy()
         cs["m"] = cs["time"].dt.month
         cmon   = cs.groupby("m")["PSAL"].agg(["mean", "std"]).reset_index()
@@ -761,8 +782,6 @@ if "results" in st.session_state:
                            alpha=0.2, color="steelblue", label="± 1 std")
         ax_cm.plot(cmon["m"], cmon["mean"], "o-",
                    color="steelblue", lw=2, ms=5, label="Monthly mean")
-  #      ax_cm.plot(cmon["m"], cmon["mean"].rolling(3, center=True).mean(),
-  #                 "--", color="navy", lw=1.2, alpha=0.6, label="3-month smooth")
         ax_cm.set_xticks(range(1, 13))
         ax_cm.set_xticklabels(MONTH_LABELS, fontsize=7)
         ax_cm.set_xlabel("Month")
@@ -773,7 +792,6 @@ if "results" in st.session_state:
         ax_cm.legend(fontsize=7)
         ax_cm.grid(True, alpha=0.3)
 
-        # [0,1] CORA DOY scatter
         years_c   = sorted(cora_surf["time"].dt.year.unique())
         colours_c = cm.viridis(np.linspace(0, 1, len(years_c)))
         for col_c, (_, ydata) in zip(colours_c,
@@ -803,11 +821,10 @@ if "results" in st.session_state:
 
     # ── Row 2 — WOD surface (depth ≤ 10 m) ───────────────────────────────────
     if wod_raw is not None and not wod_raw.empty:
-        surf_wod        = wod_raw[wod_raw["DEPTH"] <= 10].copy()
+        surf_wod         = wod_raw[wod_raw["DEPTH"] <= 10].copy()
         surf_wod["time"] = pd.to_datetime(surf_wod["TIME"], errors="coerce")
-        surf_wod = surf_wod.dropna(subset=["time", "SALINITY"])
+        surf_wod         = surf_wod.dropna(subset=["time", "SALINITY"])
 
-        # [1,0] WOD monthly mean ± std
         surf_wod["m"] = surf_wod["time"].dt.month
         wmon = surf_wod.groupby("m")["SALINITY"].agg(["mean", "std"]).reset_index()
 
@@ -818,15 +835,13 @@ if "results" in st.session_state:
                                alpha=0.2, color="seagreen", label="± 1 std")
             ax_wm.plot(wmon["m"], wmon["mean"], "o-",
                        color="seagreen", lw=2, ms=5, label="Monthly mean")
-  #          ax_wm.plot(wmon["m"], wmon["mean"].rolling(3, center=True).mean(),
-  #                     "--", color="darkgreen", lw=1.2, alpha=0.6,
-  #                     label="3-month smooth")
         else:
             _blank(ax_wm, "No surface WOD data (depth ≤ 10 m)")
 
         ax_wm.set_xticks(range(1, 13))
         ax_wm.set_xticklabels(MONTH_LABELS, fontsize=7)
         ax_wm.set_xlabel("Month")
+        # FIX: typo "SAinity" → "Salinity"
         ax_wm.set_ylabel("Salinity (PSU)")
         ax_wm.set_title(
             f"WOD Monthly Mean ± Std (depth ≤ 10 m)\n"
@@ -834,7 +849,6 @@ if "results" in st.session_state:
         ax_wm.legend(fontsize=7)
         ax_wm.grid(True, alpha=0.3)
 
-        # [1,1] WOD DOY scatter
         if not surf_wod.empty:
             years_w   = sorted(surf_wod["time"].dt.year.unique())
             colours_w = cm.plasma(np.linspace(0, 1, len(years_w)))
@@ -865,8 +879,7 @@ if "results" in st.session_state:
         _blank(ax_wm, "WOD data not available")
         _blank(ax_wd, "WOD data not available")
 
-    # ── Row 3 — Depth profiles (reactive to slider) ───────────────────────────
-    # [2,0] WOD T–depth scatter
+    # ── Row 3 — Depth profiles ────────────────────────────────────────────────
     if wod_raw is not None and not wod_raw.empty:
         raw_clip = wod_raw[wod_raw["DEPTH"] <= max_depth].copy()
         MAX_PTS  = 8_000
@@ -892,7 +905,6 @@ if "results" in st.session_state:
     else:
         _blank(ax_ws, "WOD data not available")
 
-    # [2,1] CORA T–depth profile
     if cora_dp is not None and not cora_dp.empty and "depth" in cora_dp.columns:
         profile = (
             cora_dp.groupby("depth")["PSAL"]
@@ -925,7 +937,6 @@ if "results" in st.session_state:
     else:
         _blank(ax_cp, f"CORA depth profile not available\ndown to {max_depth} m")
 
-    # Row labels on the left edge
     for ax, label in [
         (ax_cm, "CORA surface"),
         (ax_wm, "WOD surface\n(depth ≤ 10 m)"),
@@ -941,13 +952,7 @@ if "results" in st.session_state:
     st.pyplot(fig)
     plt.close(fig)
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Summary figure — 2 rows × 2 columns
-    # [0,0] CORA monthly + WOD monthly overlaid (WOD dashed)
-    # [0,1] CORA depth profile + WOD depth profile overlaid (WOD dashed)
-    # [1,0] CORA scatter: x = TIME, y = DEPTH, colour = PSAL (rainbow)
-    # [1,1] WOD  scatter: x = TIME, y = DEPTH, colour = PSAL (rainbow)
-    # ═══════════════════════════════════════════════════════════════════════════
+    # ── Summary figure — CORA vs WOD ─────────────────────────────────────────
     st.divider()
     st.markdown(
         "<div class='section-hdr'>🔀 CORA vs WOD — Combined View</div>",
@@ -961,7 +966,6 @@ if "results" in st.session_state:
     ax_mon, ax_dep = axes2[0, 0], axes2[0, 1]
     ax_ct,  ax_wt  = axes2[1, 0], axes2[1, 1]
 
-    # re-evaluate availability flags (may not exist if fig1 section was skipped)
     has_cora_mon = cora_surf is not None and not cora_surf.empty
     has_wod_mon  = wod_raw  is not None and not wod_raw.empty
     has_wod_dp   = wod_raw  is not None and not wod_raw.empty
@@ -969,11 +973,10 @@ if "results" in st.session_state:
                     and not cora_dp.empty
                     and "depth" in cora_dp.columns)
 
-    # ── [0,0] Monthly — CORA (solid) + WOD (dashed) ───────────────────────────
     if has_cora_mon:
-        cs3     = cora_surf.copy()
+        cs3      = cora_surf.copy()
         cs3["m"] = cs3["time"].dt.month
-        cmon3   = cs3.groupby("m")["PSAL"].agg(["mean", "std"]).reset_index()
+        cmon3    = cs3.groupby("m")["PSAL"].agg(["mean", "std"]).reset_index()
         ax_mon.fill_between(cmon3["m"],
                             cmon3["mean"] - cmon3["std"],
                             cmon3["mean"] + cmon3["std"],
@@ -982,11 +985,11 @@ if "results" in st.session_state:
                     color="steelblue", lw=2, ms=5, label="CORA mean")
 
     if has_wod_mon:
-        sw3          = wod_raw[wod_raw["DEPTH"] <= 10].copy()
-        sw3["time"]  = pd.to_datetime(sw3["TIME"], errors="coerce")
-        sw3          = sw3.dropna(subset=["time", "SALINITY"])
-        sw3["m"]     = sw3["time"].dt.month
-        wmon3        = sw3.groupby("m")["SALINITY"].agg(["mean", "std"]).reset_index()
+        sw3         = wod_raw[wod_raw["DEPTH"] <= 10].copy()
+        sw3["time"] = pd.to_datetime(sw3["TIME"], errors="coerce")
+        sw3         = sw3.dropna(subset=["time", "SALINITY"])
+        sw3["m"]    = sw3["time"].dt.month
+        wmon3       = sw3.groupby("m")["SALINITY"].agg(["mean", "std"]).reset_index()
         if not wmon3.empty:
             ax_mon.fill_between(wmon3["m"],
                                 wmon3["mean"] - wmon3["std"],
@@ -1009,7 +1012,6 @@ if "results" in st.session_state:
         ax_mon.legend(fontsize=7)
         ax_mon.grid(True, alpha=0.3)
 
-    # ── [0,1] T–depth — CORA (solid) + WOD (dashed) ──────────────────────────
     if has_cora_dp:
         prof_c = (cora_dp.groupby("depth")["PSAL"]
                   .agg(["mean", "std"]).reset_index().sort_values("depth"))
@@ -1045,339 +1047,171 @@ if "results" in st.session_state:
         ax_dep.legend(fontsize=7)
         ax_dep.grid(True, alpha=0.3)
 
-    # ── [1,0] CORA TIME × DEPTH scatter, colour = PSAL (rainbow) ─────────────
     if has_cora_dp:
-
-        cora_plot = cora_dp.dropna(
-            subset=["time", "depth", "PSAL"]
-        ).copy()
-
-        # ── Monthly averages ──────────────────────────────────────────────
+        cora_plot = cora_dp.dropna(subset=["time", "depth", "PSAL"]).copy()
         cora_plot["year_month"] = (
-            cora_plot["time"]
-            .dt.to_period("M")
-            .dt.to_timestamp()
+            cora_plot["time"].dt.to_period("M").dt.to_timestamp()
         )
-
         cora_monthly = (
-            cora_plot
-            .groupby(["year_month", "depth"])["PSAL"]
-            .mean()
-            .reset_index()
+            cora_plot.groupby(["year_month", "depth"])["PSAL"]
+            .mean().reset_index()
         )
-
         if not cora_monthly.empty:
-
             t_min_c = cora_monthly["PSAL"].min()
             t_max_c = cora_monthly["PSAL"].max()
-
             sc_ct = ax_ct.scatter(
-                cora_monthly["year_month"],
-                cora_monthly["depth"],
-                c=cora_monthly["PSAL"],
-                cmap="rainbow",
-                s=10,
-                alpha=0.7,
-                vmin=t_min_c,
-                vmax=t_max_c,
+                cora_monthly["year_month"], cora_monthly["depth"],
+                c=cora_monthly["PSAL"], cmap="rainbow",
+                s=10, alpha=0.7, vmin=t_min_c, vmax=t_max_c,
             )
-
             cb_ct = fig2.colorbar(sc_ct, ax=ax_ct, pad=0.02)
             cb_ct.set_label("Salinity (PSU)", fontsize=8)
-
         else:
             _blank(ax_ct, "No CORA monthly depth data")
 
         ax_ct.set_xlabel("Time")
         ax_ct.set_ylabel("Depth (m)")
-
         ax_ct.invert_yaxis()
         ax_ct.set_ylim(bottom=max_depth, top=0)
-
         ax_ct.set_title(
             f"CORA Monthly Mean Salinity (TIME × DEPTH)\n"
-            f"({rlat:.4f}°N, {rlon:.4f}°E) · 0 – {max_depth:.0f} m",
-            fontsize=9
-        )
-
-        ax_ct.tick_params(
-            axis="x",
-            rotation=25,
-            labelsize=7
-        )
-
+            f"({rlat:.4f}°N, {rlon:.4f}°E) · 0 – {max_depth:.0f} m", fontsize=9)
+        ax_ct.tick_params(axis="x", rotation=25, labelsize=7)
         ax_ct.grid(True, alpha=0.2)
-
     else:
         _blank(ax_ct, "CORA depth data not available")
 
-    # ── [1,1] WOD TIME × DEPTH  ─────────────────────────────────────
     if has_wod_dp:
-
-        wod_plot = wod_raw[wod_raw["DEPTH"] <= max_depth].copy()
-    
-        wod_plot["time"] = pd.to_datetime(
-            wod_plot["TIME"],
-            errors="coerce"
-        )
-    
-        wod_plot = wod_plot.dropna(
-            subset=["time", "DEPTH", "SALINITY"]
-        )
-    
-        # ── Monthly averages ──────────────────────────────────────────────
+        wod_plot         = wod_raw[wod_raw["DEPTH"] <= max_depth].copy()
+        wod_plot["time"] = pd.to_datetime(wod_plot["TIME"], errors="coerce")
+        wod_plot         = wod_plot.dropna(subset=["time", "DEPTH", "SALINITY"])
         wod_plot["year_month"] = wod_plot["time"].dt.to_period("M").dt.to_timestamp()
-    
         wod_monthly = (
-            wod_plot
-            .groupby(["year_month", "DEPTH"])["SALINITY"]
-            .mean()
-            .reset_index()
+            wod_plot.groupby(["year_month", "DEPTH"])["SALINITY"]
+            .mean().reset_index()
         )
-    
         if not wod_monthly.empty:
-    
             t_min_w = wod_monthly["SALINITY"].min()
             t_max_w = wod_monthly["SALINITY"].max()
-    
             sc_wt = ax_wt.scatter(
-                wod_monthly["year_month"],
-                wod_monthly["DEPTH"],
-                c=wod_monthly["SALINITY"],
-                cmap="rainbow",
-                s=10,
-                alpha=0.7,
-                vmin=t_min_w,
-                vmax=t_max_w,
+                wod_monthly["year_month"], wod_monthly["DEPTH"],
+                c=wod_monthly["SALINITY"], cmap="rainbow",
+                s=10, alpha=0.7, vmin=t_min_w, vmax=t_max_w,
             )
-    
             cb_wt = fig2.colorbar(sc_wt, ax=ax_wt, pad=0.02)
             cb_wt.set_label("Salinity (PSU)", fontsize=8)
-    
         else:
             _blank(ax_wt, "No WOD monthly data in depth range")
-    
+
         ax_wt.set_xlabel("Time")
         ax_wt.set_ylabel("Depth (m)")
         ax_wt.invert_yaxis()
         ax_wt.set_ylim(bottom=max_depth, top=0)
-    
         ax_wt.set_title(
             f"WOD Monthly Mean Salinity (TIME × DEPTH)\n"
-            f"({rlat:.4f}°N, {rlon:.4f}°E) · 0 – {max_depth:.0f} m",
-            fontsize=9
-        )
-    
+            f"({rlat:.4f}°N, {rlon:.4f}°E) · 0 – {max_depth:.0f} m", fontsize=9)
         ax_wt.tick_params(axis="x", rotation=25, labelsize=7)
         ax_wt.grid(True, alpha=0.2)
-    
     else:
         _blank(ax_wt, "WOD data not available")
 
     st.pyplot(fig2)
     plt.close(fig2)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # Monthly climatological Hovmöller diagrams
-    # [0,0] CORA monthly climatology
-    # [0,1] WOD  monthly climatology
-    # ════════════════════════════════════════════════════════════════════════
-
+    # ── Hovmöller diagrams ────────────────────────────────────────────────────
     st.divider()
-
     st.markdown(
         "<div class='section-hdr'>🌡️ Monthly Climatological Hovmöller Diagrams</div>",
         unsafe_allow_html=True,
     )
 
     fig3, axes3 = plt.subplots(
-        1, 2,
-        figsize=(18, 7),
+        1, 2, figsize=(18, 7),
         gridspec_kw={"wspace": 0.28},
     )
-
     ax_ch, ax_wh = axes3[0], axes3[1]
 
-    # ── [0,0] CORA climatological Hovmöller ───────────────────────────────
     if has_cora_dp:
-
-        cora_plot = cora_dp.dropna(
-            subset=["time", "depth", "PSAL"]
-        ).copy()
-
+        cora_plot = cora_dp.dropna(subset=["time", "depth", "PSAL"]).copy()
         cora_plot["month"] = cora_plot["time"].dt.month
-
-        # optional depth binning
         depth_bin = 10
-
-        cora_plot["DEPTH_BIN"] = (
-            np.round(cora_plot["depth"] / depth_bin) * depth_bin
-        )
-
+        cora_plot["DEPTH_BIN"] = np.round(cora_plot["depth"] / depth_bin) * depth_bin
         cora_monthly = (
-            cora_plot
-            .groupby(["month", "DEPTH_BIN"])["PSAL"]
-            .mean()
-            .reset_index()
+            cora_plot.groupby(["month", "DEPTH_BIN"])["PSAL"]
+            .mean().reset_index()
         )
-
         if not cora_monthly.empty:
-
             hov_c = cora_monthly.pivot(
-                index="DEPTH_BIN",
-                columns="month",
-                values="PSAL"
-            )
-
-            hov_c = hov_c.sort_index()
-
-            Xc = hov_c.columns
-            Yc = hov_c.index
-            Zc = hov_c.values
-
+                index="DEPTH_BIN", columns="month", values="PSAL"
+            ).sort_index()
             cf_c = ax_ch.contourf(
-                Xc,
-                Yc,
-                Zc,
-                levels=30,
-                cmap="rainbow",
-                extend="both"
+                hov_c.columns, hov_c.index, hov_c.values,
+                levels=30, cmap="rainbow", extend="both"
             )
-
-            cb_c = fig3.colorbar(cf_c, ax=ax_ch, pad=0.02)
-            cb_c.set_label("Salinity (PSU)", fontsize=8)
-
+            fig3.colorbar(cf_c, ax=ax_ch, pad=0.02).set_label("Salinity (PSU)", fontsize=8)
             ax_ch.contour(
-                Xc,
-                Yc,
-                Zc,
-                levels=15,
-                colors="k",
-                linewidths=0.25,
-                alpha=0.35
+                hov_c.columns, hov_c.index, hov_c.values,
+                levels=15, colors="k", linewidths=0.25, alpha=0.35
             )
-
         else:
             _blank(ax_ch, "No CORA climatology available")
 
         ax_ch.set_xticks(range(1, 13))
         ax_ch.set_xticklabels(MONTH_LABELS, fontsize=8)
-
         ax_ch.set_xlabel("Month")
         ax_ch.set_ylabel("Depth (m)")
-
         ax_ch.invert_yaxis()
         ax_ch.set_ylim(bottom=max_depth, top=0)
-
         ax_ch.set_title(
             f"CORA Monthly Climatological Hovmöller\n"
-            f"({rlat:.4f}°N, {rlon:.4f}°E)",
-            fontsize=10
-        )
-
+            f"({rlat:.4f}°N, {rlon:.4f}°E)", fontsize=10)
         ax_ch.grid(False)
-
     else:
         _blank(ax_ch, "CORA depth data not available")
 
-    # ── [0,1] WOD climatological Hovmöller ────────────────────────────────
     if has_wod_dp:
-
-        wod_plot = wod_raw[wod_raw["DEPTH"] <= max_depth].copy()
-
-        wod_plot["time"] = pd.to_datetime(
-            wod_plot["TIME"],
-            errors="coerce"
-        )
-
-        wod_plot = wod_plot.dropna(
-            subset=["time", "DEPTH", "SALINITY"]
-        )
-
+        wod_plot         = wod_raw[wod_raw["DEPTH"] <= max_depth].copy()
+        wod_plot["time"] = pd.to_datetime(wod_plot["TIME"], errors="coerce")
+        wod_plot         = wod_plot.dropna(subset=["time", "DEPTH", "SALINITY"])
         wod_plot["month"] = wod_plot["time"].dt.month
-
-        # optional depth binning
         depth_bin = 10
-
-        wod_plot["DEPTH_BIN"] = (
-            np.round(wod_plot["DEPTH"] / depth_bin) * depth_bin
-        )
-
+        wod_plot["DEPTH_BIN"] = np.round(wod_plot["DEPTH"] / depth_bin) * depth_bin
         wod_monthly = (
-            wod_plot
-            .groupby(["month", "DEPTH_BIN"])["SALINITY"]
-            .mean()
-            .reset_index()
+            wod_plot.groupby(["month", "DEPTH_BIN"])["SALINITY"]
+            .mean().reset_index()
         )
-
         if not wod_monthly.empty:
-
             hov_w = wod_monthly.pivot(
-                index="DEPTH_BIN",
-                columns="month",
-                values="SALINITY"
-            )
-
-            hov_w = hov_w.sort_index()
-
-            Xw = hov_w.columns
-            Yw = hov_w.index
-            Zw = hov_w.values
-
+                index="DEPTH_BIN", columns="month", values="SALINITY"
+            ).sort_index()
             cf_w = ax_wh.contourf(
-                Xw,
-                Yw,
-                Zw,
-                levels=30,
-                cmap="rainbow",
-                extend="both"
+                hov_w.columns, hov_w.index, hov_w.values,
+                levels=30, cmap="rainbow", extend="both"
             )
-
-            cb_w = fig3.colorbar(cf_w, ax=ax_wh, pad=0.02)
-            cb_w.set_label("Salinity (PSU)", fontsize=8)
-
+            fig3.colorbar(cf_w, ax=ax_wh, pad=0.02).set_label("Salinity (PSU)", fontsize=8)
             ax_wh.contour(
-                Xw,
-                Yw,
-                Zw,
-                levels=15,
-                colors="k",
-                linewidths=0.25,
-                alpha=0.35
+                hov_w.columns, hov_w.index, hov_w.values,
+                levels=15, colors="k", linewidths=0.25, alpha=0.35
             )
-
         else:
             _blank(ax_wh, "No WOD climatology available")
 
         ax_wh.set_xticks(range(1, 13))
         ax_wh.set_xticklabels(MONTH_LABELS, fontsize=8)
-
         ax_wh.set_xlabel("Month")
         ax_wh.set_ylabel("Depth (m)")
-
         ax_wh.invert_yaxis()
         ax_wh.set_ylim(bottom=max_depth, top=0)
-
         ax_wh.set_title(
             f"WOD Monthly Climatological Hovmöller\n"
-            f"({rlat:.4f}°N, {rlon:.4f}°E)",
-            fontsize=10
-        )
-
+            f"({rlat:.4f}°N, {rlon:.4f}°E)", fontsize=10)
         ax_wh.grid(False)
-
     else:
         _blank(ax_wh, "WOD data not available")
 
     st.pyplot(fig3)
     plt.close(fig3)
 
-   # ────────────────────────────────────────────────────────────────
-    st.divider()  
-  
-   # ────────────────────────────────────────────────────────────────
- 
-  
     # ── Footer ────────────────────────────────────────────────────────────────
     st.divider()
     st.markdown(
