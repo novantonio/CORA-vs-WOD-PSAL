@@ -500,23 +500,23 @@ def plot_cora_depth_profile(cora_dp: pd.DataFrame, max_depth: float,
 with st.sidebar:
     st.markdown("### 📍 Location")
 
-    # Pre-seed the widget keys from sel_lat/sel_lon so that a map click
-    # (which writes sel_lat/sel_lon + lat_input/lon_input then reruns)
-    # is reflected immediately in the number inputs.
-    if "lat_input" not in st.session_state:
-        st.session_state["lat_input"] = st.session_state.get("sel_lat", DEFAULT_LAT)
-    if "lon_input" not in st.session_state:
-        st.session_state["lon_input"] = st.session_state.get("sel_lon", DEFAULT_LON)
+    # Using unique keys tied to the current sel_lat/sel_lon values forces
+    # Streamlit to recreate the widget (and thus honour the new value=)
+    # whenever the map is clicked and sel_lat/sel_lon change.
+    _lat_key = f"lat_input_{st.session_state.get('sel_lat', DEFAULT_LAT)}"
+    _lon_key = f"lon_input_{st.session_state.get('sel_lon', DEFAULT_LON)}"
 
     lat_in = st.number_input(
         "Latitude (°N)",  min_value=-90.0, max_value=90.0,
+        value=st.session_state.get("sel_lat", DEFAULT_LAT),
         step=0.01, format="%.4f",
-        key="lat_input",
+        key=_lat_key,
     )
     lon_in = st.number_input(
         "Longitude (°E)", min_value=-180.0, max_value=180.0,
+        value=st.session_state.get("sel_lon", DEFAULT_LON),
         step=0.01, format="%.4f",
-        key="lon_input",
+        key=_lon_key,
     )
 
     st.divider()
@@ -677,11 +677,8 @@ if map_result and map_result.get("last_clicked"):
     # Only rerun if the click is actually a new location
     if (new_lat != st.session_state.get("sel_lat")
             or new_lon != st.session_state.get("sel_lon")):
-        st.session_state["sel_lat"]   = new_lat
-        st.session_state["sel_lon"]   = new_lon
-        # Sync sidebar number_input widgets so they show the clicked values
-        st.session_state["lat_input"] = new_lat
-        st.session_state["lon_input"] = new_lon
+        st.session_state["sel_lat"] = new_lat
+        st.session_state["sel_lon"] = new_lon
         st.rerun()
 
 # Always derive lat/lon from session_state so map clicks propagate correctly
