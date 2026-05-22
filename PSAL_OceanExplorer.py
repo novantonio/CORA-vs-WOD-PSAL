@@ -500,15 +500,21 @@ def plot_cora_depth_profile(cora_dp: pd.DataFrame, max_depth: float,
 with st.sidebar:
     st.markdown("### 📍 Location")
 
+    # Pre-seed the widget keys from sel_lat/sel_lon so that a map click
+    # (which writes sel_lat/sel_lon + lat_input/lon_input then reruns)
+    # is reflected immediately in the number inputs.
+    if "lat_input" not in st.session_state:
+        st.session_state["lat_input"] = st.session_state.get("sel_lat", DEFAULT_LAT)
+    if "lon_input" not in st.session_state:
+        st.session_state["lon_input"] = st.session_state.get("sel_lon", DEFAULT_LON)
+
     lat_in = st.number_input(
         "Latitude (°N)",  min_value=-90.0, max_value=90.0,
-        value=st.session_state.get("sel_lat", DEFAULT_LAT),
         step=0.01, format="%.4f",
         key="lat_input",
     )
     lon_in = st.number_input(
         "Longitude (°E)", min_value=-180.0, max_value=180.0,
-        value=st.session_state.get("sel_lon", DEFAULT_LON),
         step=0.01, format="%.4f",
         key="lon_input",
     )
@@ -666,12 +672,21 @@ map_result = st_folium(m, use_container_width=True, height=420,
 
 if map_result and map_result.get("last_clicked"):
     clicked = map_result["last_clicked"]
-    st.session_state["sel_lat"] = round(clicked["lat"], 4)
-    st.session_state["sel_lon"] = round(clicked["lng"], 4)
-    st.rerun()
+    new_lat = round(clicked["lat"], 4)
+    new_lon = round(clicked["lng"], 4)
+    # Only rerun if the click is actually a new location
+    if (new_lat != st.session_state.get("sel_lat")
+            or new_lon != st.session_state.get("sel_lon")):
+        st.session_state["sel_lat"]   = new_lat
+        st.session_state["sel_lon"]   = new_lon
+        # Sync sidebar number_input widgets so they show the clicked values
+        st.session_state["lat_input"] = new_lat
+        st.session_state["lon_input"] = new_lon
+        st.rerun()
 
-latitude  = lat_in
-longitude = lon_in
+# Always derive lat/lon from session_state so map clicks propagate correctly
+latitude  = st.session_state.get("sel_lat", DEFAULT_LAT)
+longitude = st.session_state.get("sel_lon", DEFAULT_LON)
 
 st.info(
     f"📍 **Analysis point:** {latitude:.4f}°N, {longitude:.4f}°E  "
