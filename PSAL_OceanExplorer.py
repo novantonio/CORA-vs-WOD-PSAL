@@ -78,7 +78,7 @@ st.markdown(
 CORA_SURFACE_URL = (
     "https://erddap.emodnet-physics.eu/erddap/griddap/"
     "INSITU_GLO_PHY_TS_OA_MY_013_052_PSAL.csv"
-    "?TEMP%5B(1990-01-01T00:00:00Z):1:(2023-06-15T00:00:00Z)%5D"
+    "?PSAL%5B(1990-01-01T00:00:00Z):1:(2023-06-15T00:00:00Z)%5D"
     "%5B(1.0):1:(1)%5D"
     "%5B({lat}):1:({lat})%5D"
     "%5B({lon}):1:({lon})%5D"
@@ -88,7 +88,7 @@ CORA_SURFACE_URL = (
 CORA_DEPTH_URL = (
     "https://erddap.emodnet-physics.eu/erddap/griddap/"
     "INSITU_GLO_PHY_TS_OA_MY_013_052_PSAL.csv"
-    "?TEMP%5B(1990-01-01T00:00:00Z):1:(2023-06-15T00:00:00Z)%5D"
+    "?PSAL%5B(1990-01-01T00:00:00Z):1:(2023-06-15T00:00:00Z)%5D"
     "%5B(1.0):1:({depth})%5D"
     "%5B({lat}):1:({lat})%5D"
     "%5B({lon}):1:({lon})%5D"
@@ -163,7 +163,7 @@ def fetch_cora_surface(latitude: float, longitude: float) -> pd.DataFrame | None
             raise ValueError("CORA returned an HTML error page.")
         df = pd.read_csv(io.StringIO(r.text), skiprows=[1])
         df["time"] = pd.to_datetime(df["time"])
-        df["TEMP"] = pd.to_numeric(df["TEMP"], errors="coerce")
+        df["PSAL"] = pd.to_numeric(df["PSAL"], errors="coerce")
         return df.dropna()
     except Exception as exc:
         st.warning(f"CORA surface fetch failed: {exc}")
@@ -177,7 +177,7 @@ def fetch_cora_depth_profile(latitude: float, longitude: float,
     CORA from 1 m to max_depth — cached by (lat, lon, max_depth).
     Re-fetched automatically when depth slider changes.
 
-    Returns DataFrame with columns: time, depth, TEMP.
+    Returns DataFrame with columns: time, depth, PSAL.
     """
     url = CORA_DEPTH_URL.format(
         lat=round(latitude, 4),
@@ -191,7 +191,7 @@ def fetch_cora_depth_profile(latitude: float, longitude: float,
             raise ValueError("CORA returned an HTML error page.")
         df = pd.read_csv(io.StringIO(r.text), skiprows=[1])
         df["time"]  = pd.to_datetime(df["time"])
-        df["TEMP"]  = pd.to_numeric(df["TEMP"],  errors="coerce")
+        df["PSAL"]  = pd.to_numeric(df["PSAL"],  errors="coerce")
         # ERDDAP returns a "depth" column with the depth in metres
         if "depth" in df.columns:
             df["depth"] = pd.to_numeric(df["depth"], errors="coerce")
@@ -208,7 +208,7 @@ def plot_cora_monthly(cora: pd.DataFrame,
     """CORA monthly mean ± std."""
     cora      = cora.copy()
     cora["m"] = cora["time"].dt.month
-    monthly   = cora.groupby("m")["TEMP"].agg(["mean", "std"]).reset_index()
+    monthly   = cora.groupby("m")["PSAL"].agg(["mean", "std"]).reset_index()
 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.fill_between(monthly["m"],
@@ -246,11 +246,11 @@ def plot_cora_doy(cora: pd.DataFrame,
 
     for colour, (_, ydata) in zip(colours, cora.groupby(cora["time"].dt.year)):
         doy = ydata["time"].dt.dayofyear
-        ax.scatter(doy, ydata["TEMP"], s=8, color=colour, alpha=0.55)
+        ax.scatter(doy, ydata["PSAL"], s=8, color=colour, alpha=0.55)
 
     cora2        = cora.copy()
     cora2["doy"] = cora2["time"].dt.dayofyear
-    doy_med      = cora2.groupby("doy")["TEMP"].median()
+    doy_med      = cora2.groupby("doy")["PSAL"].median()
     ax.plot(doy_med.index, doy_med.values,
             color="crimson", lw=2, zorder=5, label="Daily median")
 
@@ -422,7 +422,7 @@ def plot_cora_depth_profile(cora_dp: pd.DataFrame, max_depth: float,
         return fig
 
     profile = (
-        cora_dp.groupby(depth_col)["TEMP"]
+        cora_dp.groupby(depth_col)["PSAL"]
         .agg(["mean", "std", "median"])
         .reset_index()
         .sort_values(depth_col)
@@ -752,7 +752,7 @@ if "results" in st.session_state:
         # [0,0] CORA monthly mean ± std
         cs     = cora_surf.copy()
         cs["m"] = cs["time"].dt.month
-        cmon   = cs.groupby("m")["TEMP"].agg(["mean", "std"]).reset_index()
+        cmon   = cs.groupby("m")["PSAL"].agg(["mean", "std"]).reset_index()
 
         ax_cm.fill_between(cmon["m"],
                            cmon["mean"] - cmon["std"],
@@ -777,11 +777,11 @@ if "results" in st.session_state:
         colours_c = cm.viridis(np.linspace(0, 1, len(years_c)))
         for col_c, (_, ydata) in zip(colours_c,
                                      cora_surf.groupby(cora_surf["time"].dt.year)):
-            ax_cd.scatter(ydata["time"].dt.dayofyear, ydata["TEMP"],
+            ax_cd.scatter(ydata["time"].dt.dayofyear, ydata["PSAL"],
                           s=6, color=col_c, alpha=0.5)
         cs2 = cora_surf.copy()
         cs2["doy"] = cs2["time"].dt.dayofyear
-        doy_med_c  = cs2.groupby("doy")["TEMP"].median()
+        doy_med_c  = cs2.groupby("doy")["PSAL"].median()
         ax_cd.plot(doy_med_c.index, doy_med_c.values,
                    color="crimson", lw=2, zorder=5, label="Daily median")
         sm_c = plt.cm.ScalarMappable(
@@ -894,7 +894,7 @@ if "results" in st.session_state:
     # [2,1] CORA T–depth profile
     if cora_dp is not None and not cora_dp.empty and "depth" in cora_dp.columns:
         profile = (
-            cora_dp.groupby("depth")["TEMP"]
+            cora_dp.groupby("depth")["PSAL"]
             .agg(["mean", "std", "median"])
             .reset_index()
             .sort_values("depth")
@@ -944,8 +944,8 @@ if "results" in st.session_state:
     # Summary figure — 2 rows × 2 columns
     # [0,0] CORA monthly + WOD monthly overlaid (WOD dashed)
     # [0,1] CORA depth profile + WOD depth profile overlaid (WOD dashed)
-    # [1,0] CORA scatter: x = TIME, y = DEPTH, colour = TEMP (rainbow)
-    # [1,1] WOD  scatter: x = TIME, y = DEPTH, colour = TEMP (rainbow)
+    # [1,0] CORA scatter: x = TIME, y = DEPTH, colour = PSAL (rainbow)
+    # [1,1] WOD  scatter: x = TIME, y = DEPTH, colour = PSAL (rainbow)
     # ═══════════════════════════════════════════════════════════════════════════
     st.divider()
     st.markdown(
@@ -972,7 +972,7 @@ if "results" in st.session_state:
     if has_cora_mon:
         cs3     = cora_surf.copy()
         cs3["m"] = cs3["time"].dt.month
-        cmon3   = cs3.groupby("m")["TEMP"].agg(["mean", "std"]).reset_index()
+        cmon3   = cs3.groupby("m")["PSAL"].agg(["mean", "std"]).reset_index()
         ax_mon.fill_between(cmon3["m"],
                             cmon3["mean"] - cmon3["std"],
                             cmon3["mean"] + cmon3["std"],
@@ -1010,7 +1010,7 @@ if "results" in st.session_state:
 
     # ── [0,1] T–depth — CORA (solid) + WOD (dashed) ──────────────────────────
     if has_cora_dp:
-        prof_c = (cora_dp.groupby("depth")["TEMP"]
+        prof_c = (cora_dp.groupby("depth")["PSAL"]
                   .agg(["mean", "std"]).reset_index().sort_values("depth"))
         ax_dep.fill_betweenx(prof_c["depth"],
                              prof_c["mean"] - prof_c["std"],
@@ -1044,11 +1044,11 @@ if "results" in st.session_state:
         ax_dep.legend(fontsize=7)
         ax_dep.grid(True, alpha=0.3)
 
-    # ── [1,0] CORA TIME × DEPTH scatter, colour = TEMP (rainbow) ─────────────
+    # ── [1,0] CORA TIME × DEPTH scatter, colour = PSAL (rainbow) ─────────────
     if has_cora_dp:
 
         cora_plot = cora_dp.dropna(
-            subset=["time", "depth", "TEMP"]
+            subset=["time", "depth", "PSAL"]
         ).copy()
 
         # ── Monthly averages ──────────────────────────────────────────────
@@ -1060,20 +1060,20 @@ if "results" in st.session_state:
 
         cora_monthly = (
             cora_plot
-            .groupby(["year_month", "depth"])["TEMP"]
+            .groupby(["year_month", "depth"])["PSAL"]
             .mean()
             .reset_index()
         )
 
         if not cora_monthly.empty:
 
-            t_min_c = cora_monthly["TEMP"].min()
-            t_max_c = cora_monthly["TEMP"].max()
+            t_min_c = cora_monthly["PSAL"].min()
+            t_max_c = cora_monthly["PSAL"].max()
 
             sc_ct = ax_ct.scatter(
                 cora_monthly["year_month"],
                 cora_monthly["depth"],
-                c=cora_monthly["TEMP"],
+                c=cora_monthly["PSAL"],
                 cmap="rainbow",
                 s=10,
                 alpha=0.7,
@@ -1201,7 +1201,7 @@ if "results" in st.session_state:
     if has_cora_dp:
 
         cora_plot = cora_dp.dropna(
-            subset=["time", "depth", "TEMP"]
+            subset=["time", "depth", "PSAL"]
         ).copy()
 
         cora_plot["month"] = cora_plot["time"].dt.month
@@ -1215,7 +1215,7 @@ if "results" in st.session_state:
 
         cora_monthly = (
             cora_plot
-            .groupby(["month", "DEPTH_BIN"])["TEMP"]
+            .groupby(["month", "DEPTH_BIN"])["PSAL"]
             .mean()
             .reset_index()
         )
@@ -1225,7 +1225,7 @@ if "results" in st.session_state:
             hov_c = cora_monthly.pivot(
                 index="DEPTH_BIN",
                 columns="month",
-                values="TEMP"
+                values="PSAL"
             )
 
             hov_c = hov_c.sort_index()
