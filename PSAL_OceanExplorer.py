@@ -38,6 +38,7 @@ import requests
 import streamlit as st
 from streamlit_folium import st_folium
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
 
@@ -634,7 +635,7 @@ folium.Rectangle(
 
 folium.LayerControl().add_to(m)
 
-map_result = st_folium(m, width="100%", height=420, returned_objects=["last_clicked"])
+map_result = st_folium(m, use_container_width=True,, height=420, returned_objects=["last_clicked"])
 
 if map_result and map_result.get("last_clicked"):
     clicked = map_result["last_clicked"]
@@ -826,7 +827,7 @@ if "results" in st.session_state:
         ax_wm.set_xticks(range(1, 13))
         ax_wm.set_xticklabels(MONTH_LABELS, fontsize=7)
         ax_wm.set_xlabel("Month")
-        ax_wm.set_ylabel("SAinity (PSU)")
+        ax_wm.set_ylabel("Salinity (PSU)")
         ax_wm.set_title(
             f"WOD Monthly Mean ± Std (depth ≤ 10 m)\n"
             f"({rlat:.4f}°N, {rlon:.4f}°E) · 1970–2023", fontsize=9)
