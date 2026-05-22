@@ -77,7 +77,7 @@ st.markdown(
 # Surface climatology (depth = 1 m)
 CORA_SURFACE_URL = (
     "https://erddap.emodnet-physics.eu/erddap/griddap/"
-    "INSITU_GLO_PHY_TS_OA_MY_013_052_TEMP.csv"
+    "INSITU_GLO_PHY_TS_OA_MY_013_052_PSAL.csv"
     "?TEMP%5B(1990-01-01T00:00:00Z):1:(2023-06-15T00:00:00Z)%5D"
     "%5B(1.0):1:(1)%5D"
     "%5B({lat}):1:({lat})%5D"
@@ -87,7 +87,7 @@ CORA_SURFACE_URL = (
 # Full water-column profile (depth from 1 m to max_depth)
 CORA_DEPTH_URL = (
     "https://erddap.emodnet-physics.eu/erddap/griddap/"
-    "INSITU_GLO_PHY_TS_OA_MY_013_052_TEMP.csv"
+    "INSITU_GLO_PHY_TS_OA_MY_013_052_PSAL.csv"
     "?TEMP%5B(1990-01-01T00:00:00Z):1:(2023-06-15T00:00:00Z)%5D"
     "%5B(1.0):1:({depth})%5D"
     "%5B({lat}):1:({lat})%5D"
