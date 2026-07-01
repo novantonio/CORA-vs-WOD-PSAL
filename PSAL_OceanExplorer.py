@@ -105,7 +105,9 @@ DEFAULT_LAT, DEFAULT_LON = 44.38, 9.07
 def _wod_client():
     try:
         from beacon_api import Client          # noqa: PLC0415
-        return Client("https://beacon-wod.maris.nl")
+        return Client("https://beacon-wod.maris.nl",
+                        proxy_headers={"User-Agent": "my-app/1.0 (antonio.novellino@dedagroup.it)"}
+                       )
     except ImportError as exc:
         raise ImportError("Run: pip install beacon-api") from exc
 
